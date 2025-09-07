@@ -4,7 +4,6 @@ from pydantic_ai import Agent
 from dotenv import load_dotenv
 import sys
 
-# Apply nest_asyncio to allow nested event loops
 nest_asyncio.apply()
 
 load_dotenv()
