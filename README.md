@@ -16,10 +16,10 @@ This is the workshop handout. Each section includes a short goal, commands, and 
 04-mcp-stdio
 05-mcp-http
 06-usage-limits-retries
-08-pattern-router
-11-pattern-pipeline
-13-pattern-critic-editor
-tests-and-evals
+07-pattern-router
+08-pattern-pipeline
+09-pattern-critic-editor
+10-tests-and-evals
 ```
 
 > Models in the examples use `gemini-2.5-flash`. Swap to any provider/model your team uses by changing the model string and setting the corresponding API key.
@@ -90,6 +90,9 @@ requires-python = ">=3.12"
 
 ```python
 from pydantic_ai import Agent
+from dotenv import load_dotenv
+
+load_dotenv()
 
 def main() -> None:
     agent = Agent("gemini-2.5-flash", instructions="Be concise.")
