@@ -504,7 +504,7 @@ uv run src/limits_retries.py
 
 ---
 
-# 08-pattern-router — Router/Delegator with typed outcomes
+# 07-pattern-router — Router/Delegator with typed outcomes
 
 (If you feel lost go to the finished section of this at `git checkout 08-pattern-router` and run `uv sync --all-groups --all-extras`)
 
@@ -564,7 +564,7 @@ uv run src/pattern_router.py
 
 ---
 
-# 11-pattern-pipeline — Deterministic stages & idempotent steps
+# 08-pattern-pipeline — Deterministic stages & idempotent steps
 
 (If you feel lost go to the finished section of this at `git checkout 11-pattern-pipeline` and run `uv sync --all-groups --all-extras`)
 
@@ -622,7 +622,7 @@ uv run src/pattern_pipeline.py
 
 ---
 
-# 13-pattern-critic-editor — Two-role refinement loop
+# 09-pattern-critic-editor — Two-role refinement loop
 
 (If you feel lost go to the finished section of this at `git checkout 13-pattern-critic-editor` and run `uv sync --all-groups --all-extras`)
 
@@ -665,10 +665,9 @@ Run:
 uv run src/pattern_critic_editor.py
 ```
 
-
 ---
 
-# Tests & evals — Fast, no-network CI
+# 10-Tests and evals — Fast, no-network CI
 
 (If you feel lost go to the finished section of this at `git checkout tests-and-evals` and run `uv sync --all-groups --all-extras`)
 
