@@ -5,7 +5,6 @@
 This is the workshop handout. Each section includes a short goal, commands, and **copy-pasteable code** with file paths. If someone falls behind, you can checkpoint the repo by committing at the end of each section.
 
 ---
-
 ## Repo layout & branches you’ll create
 
 ```
@@ -16,10 +15,10 @@ This is the workshop handout. Each section includes a short goal, commands, and 
 04-mcp-stdio
 05-mcp-http
 06-usage-limits-retries
-08-pattern-router
-11-pattern-pipeline
-13-pattern-critic-editor
-tests-and-evals
+07-pattern-router
+08-pattern-pipeline
+09-pattern-critic-editor
+10-tests-and-evals
 ```
 
 > Models in the examples use `gemini-2.5-flash`. Swap to any provider/model your team uses by changing the model string and setting the corresponding API key.
@@ -72,9 +71,9 @@ uv sync
 source .venv/bin/activate
 
 # Add deps
-uv add "pydantic-ai-slim[mcp]" "httpx>=0.28.1" "pydantic>=2.11.7" tenacity
+uv add "pydantic-ai-slim[mcp]" "httpx>=0.28.1" "pydantic>=2.11.7" tenacity nest-asyncio fastmcp
 uv add "google-generativeai>=0.8.5" "pydantic-ai-slim[google]"
-uv add --dev pytest "python-dotenv==1.1.1"
+uv add --dev pytest "python-dotenv==1.1.1" ruff
 ```
 
 ### `pyproject.toml` (ensure these exist)
@@ -90,6 +89,9 @@ requires-python = ">=3.12"
 
 ```python
 from pydantic_ai import Agent
+from dotenv import load_dotenv
+
+load_dotenv()
 
 def main() -> None:
     agent = Agent("gemini-2.5-flash", instructions="Be concise.")
@@ -118,30 +120,57 @@ uv run src/boot_smoke.py
 
 ```python
 import asyncio
+import nest_asyncio
 from pydantic_ai import Agent
+from dotenv import load_dotenv
+import sys
+
+# Apply nest_asyncio to allow nested event loops
+nest_asyncio.apply()
+
+load_dotenv()
 
 agent = Agent("gemini-2.5-flash", instructions="Answer briefly.")
+
 
 def run_sync_demo() -> None:
     res = agent.run_sync("Name three prime numbers.")
     print("SYNC:", res.output)
 
+
 async def run_async_demo() -> None:
     res = await agent.run("One sentence on Fibonacci numbers.")
     print("ASYNC:", res.output)
 
+
 async def run_stream_demo() -> None:
-    async with agent.run_stream("Stream a short paragraph on solar eclipses.") as stream:
+    async with agent.run_stream(
+        "Stream a short paragraph on solar eclipses."
+    ) as stream:
         async for text_chunk in stream.stream_text():
             print(text_chunk, end="", flush=True)
+
         print("\n---")
         final = await stream.get_output()
         print("FINAL:", final)
 
+
+async def run_all_async_demos() -> None:
+    """Run all async demos in a single event loop"""
+    await run_async_demo()
+    await run_stream_demo()
+
+
 if __name__ == "__main__":
+    # Set event loop policy for better compatibility
+    if sys.platform.startswith("win"):
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     run_sync_demo()
-    asyncio.run(run_async_demo())
-    asyncio.run(run_stream_demo())
+
+    # Run all async demos in a single event loop to avoid conflicts
+    asyncio.run(run_all_async_demos())
+
 ```
 
 Run:
@@ -150,11 +179,6 @@ Run:
 uv run src/agent_basics.py
 ```
 
-Commit:
-
-```bash
-git add -A && git commit -m "01-agent-basics"
-```
 
 ---
 
@@ -164,32 +188,49 @@ git add -A && git commit -m "01-agent-basics"
 
 **Goal:** Enforce structure using `output_type` with Pydantic models. Use a union for graceful fallback.
 
-### `src/typed_output.py`
+### `src/models/answer_schema.py`
 
 ```python
 from typing import Literal
 from pydantic import BaseModel
-from pydantic_ai import Agent
+
 
 class Answer(BaseModel):
     kind: Literal["fact"]
     text: str
 
+
 class Fallback(BaseModel):
     kind: Literal["fallback"]
     message: str
 
+
 Typed = Answer | Fallback
+```
+
+### `src/typed_output.py`
+
+```python
+from dotenv import load_dotenv
+from pydantic_ai import Agent
+from models.answer_schema import Typed, Answer, Fallback
+
+load_dotenv()
 
 agent = Agent[None, Typed](
     "gemini-2.5-flash",
     output_type=Answer | Fallback,  # type: ignore[valid-type]
-    instructions="Return a factual Answer model; if unsure, return Fallback."
+    instructions="Return a factual Answer model; if unsure, return Fallback.",
 )
 
+
 def main() -> None:
-    print(agent.run_sync("What is the capital of France?").output)
-    print(agent.run_sync("Gibberish 123??").output)
+    result1 = agent.run_sync("What is the capital of France?").output
+    print(result1.model_dump_json(indent=2))
+    
+    result2 = agent.run_sync("Gibberish 123??").output
+    print(result2.model_dump_json(indent=2))
+
 
 if __name__ == "__main__":
     main()
@@ -201,11 +242,6 @@ Run:
 uv run src/typed_output.py
 ```
 
-Commit:
-
-```bash
-git add -A && git commit -m "02-typed-output"
-```
 
 ---
 
@@ -218,8 +254,11 @@ git add -A && git commit -m "02-typed-output"
 ### `src/tools_fundamentals.py`
 
 ```python
-from datetime import datetime
+from dotenv import load_dotenv
+from datetime import datetime, UTC
 from pydantic_ai import Agent, RunContext
+
+load_dotenv()
 
 agent = Agent("gemini-2.5-flash", instructions="""
 You can call `now()` for the current ISO timestamp.
@@ -227,13 +266,19 @@ Call it before answering time-sensitive questions.
 """)
 
 @agent.tool
-def now() -> str:
-    return datetime.utcnow().isoformat() + "Z"
+def now(ctx: RunContext) -> str:
+    """
+    Returns the current ISO timestamp.
+    """
+    return datetime.now(UTC).isoformat()
 
 @agent.tool
 def echo_with_ctx(ctx: RunContext, msg: str) -> str:
-    user_text = ctx.messages[-1].content_text or ""
-    return f"echo={msg} (user_prompt_len={len(user_text)})"
+    """
+    Returns the echo of the message.
+    """
+    message_count = len(ctx.messages) if hasattr(ctx, 'messages') else 0
+    return f"echo={msg} (message_count={message_count})"
 
 def main() -> None:
     print(agent.run_sync("What's the time? Use tools.").output)
@@ -249,11 +294,6 @@ Run:
 uv run src/tools_fundamentals.py
 ```
 
-Commit:
-
-```bash
-git add -A && git commit -m "03-tools-fundamentals"
-```
 
 ---
 
@@ -261,33 +301,69 @@ git add -A && git commit -m "03-tools-fundamentals"
 
 (If you feel lost go to the finished section of this at `git checkout 04-mcp-stdio` and run `uv sync --all-groups --all-extras`)
 
-**Goal:** Launch an MCP server as a subprocess and expose its tools to your agent.
+**Goal:** Create a pure-Python MCP server with useful tools and connect via stdio transport.
 
-Install a sample MCP server (on demand):
+Install FastMCP:
 
 ```bash
-uvx mcp-run-python --help   # optional: sanity check
+uv add fastmcp
+```
+
+### `src/servers/calc_server.py`
+
+```python
+from fastmcp import FastMCP
+from datetime import datetime
+
+mcp = FastMCP("Calculator")
+
+@mcp.tool()
+def add(a: int, b: int) -> int:
+    """Add two numbers."""
+    return a + b
+
+@mcp.tool()
+def multiply(a: int, b: int) -> int:
+    """Multiply two numbers.""" 
+    return a * b
+
+@mcp.tool()
+def days_between(start_date: str, end_date: str) -> int:
+    """Calculate days between two dates (YYYY-MM-DD format)."""
+    from datetime import datetime
+    start = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+    return (end - start).days
+
+if __name__ == "__main__":
+    mcp.run(transport="stdio")
 ```
 
 ### `src/mcp_stdio_client.py`
 
 ```python
 import asyncio
+from dotenv import load_dotenv
+load_dotenv()
+
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
-runpy = MCPServerStdio("uv", args=["run", "mcp-run-python", "stdio"], timeout=10)
+calc_server = MCPServerStdio("uv", args=["run", "src/servers/calc_server.py"], timeout=30)
 
 agent = Agent(
     "gemini-2.5-flash",
-    toolsets=[runpy],
-    instructions="Use tools when code execution or math helps."
+    toolsets=[calc_server],
+    instructions="Use tools when math calculations or date operations help."
 )
 
 async def main() -> None:
     async with agent:
         res = await agent.run("How many days between 2000-01-01 and 2025-03-18?")
         print(res.output)
+        
+        res2 = await agent.run("What is 17 times 23?")
+        print(res2.output)
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -299,11 +375,6 @@ Run:
 uv run src/mcp_stdio_client.py
 ```
 
-Commit:
-
-```bash
-git add -A && git commit -m "04-mcp-stdio"
-```
 
 ---
 
@@ -311,25 +382,48 @@ git add -A && git commit -m "04-mcp-stdio"
 
 (If you feel lost go to the finished section of this at `git checkout 05-mcp-http` and run `uv sync --all-groups --all-extras`)
 
-**Goal:** Stand up a tiny MCP server and connect via HTTP.
+**Goal:** Run the same server over HTTP instead of stdio for network access.
 
-```bash
-uv add fastmcp
-```
-
-### `src/servers/add_server.py`
+### `src/servers/calc_http_server.py`
 
 ```python
 from fastmcp import FastMCP
+from datetime import datetime
 
-app = FastMCP("Adder")
+mcp = FastMCP("Calculator-HTTP")
 
-@app.tool()
+@mcp.tool()
 def add(a: int, b: int) -> int:
+    """Add two numbers."""
     return a + b
 
+@mcp.tool()
+def multiply(a: int, b: int) -> int:
+    """Multiply two numbers.""" 
+    return a * b
+
+@mcp.tool()
+def days_between(start_date: str, end_date: str) -> int:
+    """Calculate days between two dates (YYYY-MM-DD format)."""
+    start = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+    return (end - start).days
+
+@mcp.tool()
+def factorial(n: int) -> int:
+    """Calculate factorial of a number."""
+    if n < 0:
+        return 0
+    elif n == 0 or n == 1:
+        return 1
+    else:
+        result = 1
+        for i in range(2, n + 1):
+            result *= i
+        return result
+
 if __name__ == "__main__":
-    app.run(transport="streamable-http")  # http://localhost:8000/mcp
+    mcp.run(transport="streamable-http")  # http://localhost:8000/mcp
 ```
 
 ### `src/mcp_http_client.py`
@@ -338,6 +432,8 @@ if __name__ == "__main__":
 import asyncio
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStreamableHTTP
+from dotenv import load_dotenv
+load_dotenv()
 
 server = MCPServerStreamableHTTP("http://localhost:8000/mcp")
 agent = Agent("gemini-2.5-flash", toolsets=[server])
@@ -346,6 +442,9 @@ async def main() -> None:
     async with agent:
         res = await agent.run("What is 7 plus 5? Use the tool.")
         print(res.output)
+        
+        res2 = await agent.run("Calculate the factorial of 6.")
+        print(res2.output)
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -355,16 +454,11 @@ Run:
 
 ```bash
 # terminal 1
-uv run src/servers/add_server.py
+uv run src/servers/calc_http_server.py
 # terminal 2
 uv run src/mcp_http_client.py
 ```
 
-Commit:
-
-```bash
-git add -A && git commit -m "05-mcp-http"
-```
 
 ---
 
@@ -393,6 +487,7 @@ def flaky_fetch(ctx: RunContext, q: str) -> str:
         # Simulate transient failure
         sleep(0.05)
         raise RuntimeError("Transient network error")
+
     return f"data-for:{q}"
 
 def main() -> None:
@@ -410,17 +505,12 @@ Run:
 uv run src/limits_retries.py
 ```
 
-Commit:
-
-```bash
-git add -A && git commit -m "06-usage-limits-retries"
-```
 
 ---
 
-# 08-pattern-router — Router/Delegator with typed outcomes
+# 07-pattern-router — Router/Delegator with typed outcomes
 
-(If you feel lost go to the finished section of this at `git checkout 08-pattern-router` and run `uv sync --all-groups --all-extras`)
+(If you feel lost go to the finished section of this at `git checkout 07-pattern-router` and run `uv sync --all-groups --all-extras`)
 
 **Goal:** Route to specialist agents using output functions, with a typed failure fallback.
 
@@ -475,17 +565,12 @@ Run:
 uv run src/pattern_router.py
 ```
 
-Commit:
-
-```bash
-git add -A && git commit -m "08-pattern-router"
-```
 
 ---
 
-# 11-pattern-pipeline — Deterministic stages & idempotent steps
+# 08-pattern-pipeline — Deterministic stages & idempotent steps
 
-(If you feel lost go to the finished section of this at `git checkout 11-pattern-pipeline` and run `uv sync --all-groups --all-extras`)
+(If you feel lost go to the finished section of this at `git checkout 08-pattern-pipeline` and run `uv sync --all-groups --all-extras`)
 
 **Goal:** Chain multiple agents programmatically for a predictable, testable flow.
 
@@ -494,28 +579,38 @@ git add -A && git commit -m "08-pattern-router"
 ```python
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 class Requirements(BaseModel):
     topic: str
     audience: str
     length_words: int = Field(ge=50, le=800)
 
+
 extractor = Agent[None, Requirements](
     "gemini-2.5-flash",
     output_type=Requirements,
-    instructions="Extract topic, audience, and a reasonable length (50-800)."
+    instructions="Extract topic, audience, and a reasonable length (50-800).",
 )
+
 
 class Outline(BaseModel):
     headings: list[str]
 
+
 outliner = Agent[None, Outline](
     "gemini-2.5-flash",
     output_type=Outline,
-    instructions="Produce 3-6 descriptive headings."
+    instructions="Produce 3-6 descriptive headings.",
 )
 
-drafter = Agent("gemini-2.5-flash", instructions="Write a crisp draft under the provided headings.")
+drafter = Agent(
+    "gemini-2.5-flash", instructions="Write a crisp draft under the provided headings."
+)
+
 
 def pipeline_run(user_brief: str) -> str:
     req = extractor.run_sync(user_brief).output
@@ -523,13 +618,20 @@ def pipeline_run(user_brief: str) -> str:
         f"Topic: {req.topic}\nAudience: {req.audience}\nLength: {req.length_words}"
     ).output
     draft = drafter.run_sync(
-        "Write with these headings:\n" + "\n".join(f"- {h}" for h in outline.headings) +
-        f"\nTarget length ~{req.length_words} words."
+        "Write with these headings:\n"
+        + "\n".join(f"- {h}" for h in outline.headings)
+        + f"\nTarget length ~{req.length_words} words."
     ).output
     return draft
 
+
 if __name__ == "__main__":
-    print(pipeline_run("I need a short blog about zero-copy networking for backend engineers."))
+    print(
+        pipeline_run(
+            "I need a short blog about zero-copy networking for backend engineers."
+        )
+    )
+
 ```
 
 Run:
@@ -538,17 +640,12 @@ Run:
 uv run src/pattern_pipeline.py
 ```
 
-Commit:
-
-```bash
-git add -A && git commit -m "11-pattern-pipeline"
-```
 
 ---
 
-# 13-pattern-critic-editor — Two-role refinement loop
+# 09-pattern-critic-editor — Two-role refinement loop
 
-(If you feel lost go to the finished section of this at `git checkout 13-pattern-critic-editor` and run `uv sync --all-groups --all-extras`)
+(If you feel lost go to the finished section of this at `git checkout 09-pattern-critic-editor` and run `uv sync --all-groups --all-extras`)
 
 **Goal:** Improve draft quality with a bounded Editor↔Critic loop.
 
@@ -558,29 +655,48 @@ git add -A && git commit -m "11-pattern-pipeline"
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
 class Review(BaseModel):
     score: int = Field(ge=1, le=10)
     suggestions: list[str]
+
 
 editor = Agent("gemini-2.5-flash", instructions="Draft clearly. Avoid fluff.")
 critic = Agent[None, Review](
     "gemini-2.5-flash",
     output_type=Review,
-    instructions="Score 1-10; include concrete revision suggestions."
+    instructions="Score 1-10; include concrete revision suggestions.",
 )
 
+
 def improve(prompt: str, rounds: int = 2, target: int = 8) -> str:
+    """
+    Improve the draft by the critic's suggestions.
+    """
     draft = editor.run_sync(prompt).output
     for _ in range(rounds):
-        review = critic.run_sync(f"Rate this draft and suggest edits:\n\n{draft}").output
+        review = critic.run_sync(
+            f"Rate this draft and suggest edits:\n\n{draft}"
+        ).output
         if review.score >= target:
             break
-        revision_instructions = "Apply these improvements:\n- " + "\n- ".join(review.suggestions)
-        draft = editor.run_sync(f"{prompt}\n\n{revision_instructions}\n\nRevise:").output
+        revision_instructions = "Apply these improvements:\n- " + "\n- ".join(
+            review.suggestions
+        )
+        draft = editor.run_sync(
+            f"{prompt}\n\n{revision_instructions}\n\nRevise:"
+        ).output
+
     return draft
+
 
 if __name__ == "__main__":
     print(improve("Write a 120-word product blurb for a privacy-first notes app."))
+
 ```
 
 Run:
@@ -589,17 +705,12 @@ Run:
 uv run src/pattern_critic_editor.py
 ```
 
-Commit:
-
-```bash
-git add -A && git commit -m "13-pattern-critic-editor"
-```
 
 ---
 
-# Tests & evals — Fast, no-network CI
+# 10-tests-and-evals — Fast, no-network CI
 
-(If you feel lost go to the finished section of this at `git checkout tests-and-evals` and run `uv sync --all-groups --all-extras`)
+(If you feel lost go to the finished section of this at `git checkout 10-tests-and-evals` and run `uv sync --all-groups --all-extras`)
 
 **Goal:** Prevent accidental live calls and test patterns by overriding models.
 
@@ -649,11 +760,6 @@ Run:
 uv run -m pytest -q
 ```
 
-Commit:
-
-```bash
-git add -A && git commit -m "tests-and-evals"
-```
 
 ---
 
@@ -662,7 +768,7 @@ git add -A && git commit -m "tests-and-evals"
 * **Model strings:** Replace `"gemini-2.5-flash"` with your provider/model (e.g., `"openai:gpt-4o-mini"`, `"anthropic:claude-3-5-sonnet-latest"`) and set the correct API key environment variable.
 * **Streaming:** `run_stream` yields final text chunks. If you need full event-by-event control, use the async `.run()` API and inspect messages/events.
 * **Unions:** When using unions or output functions, parameterize `Agent[DepsT, OutputT]` and use `# type: ignore[valid-type]` if your type checker complains on `output_type=`.
-* **MCP:** Use stdio for local subprocess servers; use Streamable HTTP for network servers. Add `tool_prefix` if multiple MCP servers expose identically named tools.
+* **MCP:** FastMCP provides pure-Python MCP servers. Use stdio for local subprocess servers; use Streamable HTTP for network servers. Add `tool_prefix` if multiple MCP servers expose identically named tools.
 * **Guardrails:** `UsageLimits` prevents runaway loops and caps tokens/tool calls. For resiliency, add Tenacity retries to your own tools or HTTP calls.
 * **Repro:** Commit your `uv.lock` to pin dependency versions for the workshop.
 
