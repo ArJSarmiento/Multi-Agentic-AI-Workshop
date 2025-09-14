@@ -59,6 +59,8 @@ For more details, see the [official Gemini API documentation](https://ai.google.
 
 # 00-boot — Project scaffolding & smoke test 
 
+> For Windows users, under the `.devcontainer` folder, inside `devcontainer.json`, change `source=${localEnv:HOME}` to `source=${localEnv:USERPROFILE}`.
+
 (If you feel lost go to the finished section of this at `git checkout 00-boot` and run `uv sync --all-groups --all-extras`)
 
 **Goal:** Create a clean Python 3.12 project, install PydanticAI (with MCP), and run a minimal agent.
