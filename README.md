@@ -519,6 +519,9 @@ uv run src/limits_retries.py
 ```python
 from pydantic import BaseModel
 from pydantic_ai import Agent, RunContext
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Specialist agents
 math_agent = Agent("gemini-2.5-flash", instructions="Compute or reason step-by-step; output the final number.")
