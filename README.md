@@ -381,6 +381,9 @@ import random
 from time import sleep
 from tenacity import retry, wait_exponential, stop_after_attempt
 from pydantic_ai import Agent, UsageLimits, RunContext
+from dotenv import load_dotenv
+
+load_dotenv()
 
 agent = Agent("gemini-2.5-flash", instructions="Be brief; avoid verbosity.")
 
